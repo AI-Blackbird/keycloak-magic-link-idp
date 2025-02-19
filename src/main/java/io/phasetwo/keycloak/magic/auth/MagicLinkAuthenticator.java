@@ -10,6 +10,7 @@ import io.phasetwo.keycloak.magic.MagicLink;
 import io.phasetwo.keycloak.magic.auth.token.MagicLinkActionToken;
 import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
+import java.net.URI;
 import java.util.OptionalInt;
 import lombok.extern.jbosslog.JBossLog;
 import org.keycloak.authentication.AuthenticationFlowContext;
@@ -54,33 +55,35 @@ public class MagicLinkAuthenticator extends UsernamePasswordForm {
     MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
 
     String email = MagicLink.trimToNull(formData.getFirst(AuthenticationManager.FORM_USERNAME));
-    // check for empty email
     if (email == null) {
-      // - first check for email from previous authenticator
       email = MagicLink.getAttemptedUsername(context);
     }
     log.debugf("email in action is %s", email);
-    // - throw error if still empty
     if (email == null) {
       context.getEvent().error(Errors.USER_NOT_FOUND);
-      Response challengeResponse =
-          challenge(context, getDefaultChallengeMessage(context), FIELD_USERNAME);
+      Response challengeResponse = challenge(context, getDefaultChallengeMessage(context), FIELD_USERNAME);
       context.failureChallenge(AuthenticationFlowError.INVALID_USER, challengeResponse);
       return;
     }
-    String clientId = context.getSession().getContext().getClient().getClientId();
 
+    String domain = email.substring(email.indexOf("@") + 1).toLowerCase();
+
+    if (isOktaManagedDomain(context, domain)) {
+      redirectToOkta(context, email);
+      return;
+    }
+
+    String clientId = context.getSession().getContext().getClient().getClientId();
     EventBuilder event = context.newEvent();
 
-    UserModel user =
-        MagicLink.getOrCreate(
-            context.getSession(),
-            context.getRealm(),
-            email,
-            isForceCreate(context, false),
-            isUpdateProfile(context, false),
-            isUpdatePassword(context, false),
-            MagicLink.registerEvent(event, MAGIC_LINK));
+    UserModel user = MagicLink.getOrCreate(
+        context.getSession(),
+        context.getRealm(),
+        email,
+        isForceCreate(context, false),
+        isUpdateProfile(context, false),
+        isUpdatePassword(context, false),
+        MagicLink.registerEvent(event, MAGIC_LINK));
 
     // check for no/invalid email address
     if (user == null
@@ -108,14 +111,13 @@ public class MagicLinkAuthenticator extends UsernamePasswordForm {
 
     OptionalInt lifespan = getActionTokenLifeSpan(context, "");
 
-    MagicLinkActionToken token =
-        MagicLink.createActionToken(
-            user,
-            clientId,
-            lifespan,
-            rememberMe(context),
-            context.getAuthenticationSession(),
-            isActionTokenPersistent(context, true));
+    MagicLinkActionToken token = MagicLink.createActionToken(
+        user,
+        clientId,
+        lifespan,
+        rememberMe(context),
+        context.getAuthenticationSession(),
+        isActionTokenPersistent(context, true));
     String link = MagicLink.linkFromActionToken(context.getSession(), context.getRealm(), token);
     boolean sent = MagicLink.sendMagicLinkEmail(context.getSession(), user, link);
     log.debugf("sent email to %s? %b. Link? %s", user.getEmail(), sent, link);
@@ -178,7 +180,8 @@ public class MagicLinkAuthenticator extends UsernamePasswordForm {
       AuthenticationFlowContext context, MultivaluedMap<String, String> formData) {
     log.debug("challenge");
     LoginFormsProvider forms = context.form();
-    if (!formData.isEmpty()) forms.setFormData(formData);
+    if (!formData.isEmpty())
+      forms.setFormData(formData);
     return forms.createLoginUsername();
   }
 
@@ -194,5 +197,50 @@ public class MagicLinkAuthenticator extends UsernamePasswordForm {
     return context.getRealm().isLoginWithEmailAllowed()
         ? Messages.INVALID_USERNAME_OR_EMAIL
         : Messages.INVALID_USERNAME;
+  }
+
+  private boolean isOktaManagedDomain(AuthenticationFlowContext context, String domain) {
+    String oktaDomains = get(context, MagicLinkAuthenticatorFactory.OKTA_DOMAINS_CONFIG, "");
+    if (oktaDomains.isEmpty()) {
+      return false;
+    }
+
+    String[] domains = oktaDomains.split(",");
+    for (String d : domains) {
+      if (domain.equalsIgnoreCase(d.trim())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private void redirectToOkta(AuthenticationFlowContext context, String email) {
+    String oktaUrl = get(context, MagicLinkAuthenticatorFactory.OKTA_URL_CONFIG, "");
+    if (oktaUrl.isEmpty()) {
+      log.error("Okta URL not configured");
+      Response challengeResponse = challenge(context, "Okta configuration error", FIELD_USERNAME);
+      context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR, challengeResponse);
+      return;
+    }
+
+    try {
+      if (oktaUrl.endsWith("/")) {
+        oktaUrl = oktaUrl.substring(0, oktaUrl.length() - 1);
+      }
+
+      String oktaAuthUrl = oktaUrl;
+
+      if (email != null && !email.isEmpty()) {
+        oktaAuthUrl += "?login_hint=" + java.net.URLEncoder.encode(email, "UTF-8");
+      }
+
+      log.debugf("Redirecting to Okta URL: %s", oktaAuthUrl);
+      Response response = Response.temporaryRedirect(URI.create(oktaAuthUrl)).build();
+      context.forceChallenge(response);
+    } catch (Exception e) {
+      log.error("Error creating Okta redirect URL", e);
+      Response challengeResponse = challenge(context, "Error redirecting to Okta", FIELD_USERNAME);
+      context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR, challengeResponse);
+    }
   }
 }

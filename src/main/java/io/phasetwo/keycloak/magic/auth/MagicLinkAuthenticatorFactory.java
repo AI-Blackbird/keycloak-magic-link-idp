@@ -15,6 +15,7 @@ import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.RealmModel;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.provider.ProviderEvent;
+import com.google.common.collect.ImmutableList;
 
 @JBossLog
 @AutoService(AuthenticatorFactory.class)
@@ -22,10 +23,13 @@ public class MagicLinkAuthenticatorFactory implements AuthenticatorFactory {
 
   public static final String PROVIDER_ID = "ext-magic-form";
 
+  public static final String OKTA_DOMAINS_CONFIG = "ext-magic-okta-domains";
+  public static final String OKTA_URL_CONFIG = "ext-magic-okta-url";
+
   private static final AuthenticationExecutionModel.Requirement[] REQUIREMENT_CHOICES = {
-    AuthenticationExecutionModel.Requirement.REQUIRED,
-    AuthenticationExecutionModel.Requirement.ALTERNATIVE,
-    AuthenticationExecutionModel.Requirement.DISABLED
+      AuthenticationExecutionModel.Requirement.REQUIRED,
+      AuthenticationExecutionModel.Requirement.ALTERNATIVE,
+      AuthenticationExecutionModel.Requirement.DISABLED
   };
 
   @Override
@@ -107,12 +111,25 @@ public class MagicLinkAuthenticatorFactory implements AuthenticatorFactory {
     actionTokenLifeSpan.setHelpText(
         "Amount of time the magic link is valid, in seconds. If this value is not specific, it will use the default 86400s (1 day)");
 
-    return List.of(
-        createUser, updateProfile, updatePassword, actionTokenPersistent, actionTokenLifeSpan);
+    return ImmutableList.of(
+        createUser, updateProfile, updatePassword, actionTokenPersistent, actionTokenLifeSpan,
+        new ProviderConfigProperty(
+            OKTA_DOMAINS_CONFIG,
+            "Okta Managed Domains",
+            "Comma-separated list of email domains managed by Okta (Leave blank to disable the auto-redirect)",
+            ProviderConfigProperty.STRING_TYPE,
+            ""),
+        new ProviderConfigProperty(
+            OKTA_URL_CONFIG,
+            "Okta URL",
+            "Full SAML endpoint URL for your Okta organization (e.g. https://your-org.okta.com/app/your-app/your-id/sso/saml)",
+            ProviderConfigProperty.STRING_TYPE,
+            ""));
   }
 
   @Override
-  public void init(Config.Scope config) {}
+  public void init(Config.Scope config) {
+  }
 
   @Override
   public void postInit(KeycloakSessionFactory factory) {
@@ -125,5 +142,6 @@ public class MagicLinkAuthenticatorFactory implements AuthenticatorFactory {
   }
 
   @Override
-  public void close() {}
+  public void close() {
+  }
 }
