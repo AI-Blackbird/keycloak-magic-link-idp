@@ -13,8 +13,8 @@ public class MagicLinkActionToken extends DefaultActionToken {
   private static final String JSON_FIELD_STATE = "state";
   private static final String JSON_FIELD_REMEMBER_ME = "rme";
   private static final String JSON_FIELD_STRING_NONCE = "nce";
-
   private static final String JSON_FIELD_REUSABLE = "ru";
+  private static final String JSON_FIELD_IS_NEW_USER = "inu";
 
   @JsonProperty(value = JSON_FIELD_REDIRECT_URI)
   private String redirectUri;
@@ -33,6 +33,9 @@ public class MagicLinkActionToken extends DefaultActionToken {
 
   @JsonProperty(value = JSON_FIELD_STRING_NONCE)
   private String nonce;
+
+  @JsonProperty(value = JSON_FIELD_IS_NEW_USER)
+  private Boolean isNewUser = false;
 
   public MagicLinkActionToken(
       String userId, int absoluteExpirationInSecs, String clientId, String redirectUri) {
@@ -65,7 +68,8 @@ public class MagicLinkActionToken extends DefaultActionToken {
       String nonce,
       String state,
       Boolean rememberMe,
-      Boolean isActionTokenPersistent) {
+      Boolean isActionTokenPersistent,
+      Boolean isNewUser) {
     super(userId, TOKEN_TYPE, absoluteExpirationInSecs, nonce(nonce));
     this.redirectUri = redirectUri;
     this.issuedFor = clientId;
@@ -73,11 +77,13 @@ public class MagicLinkActionToken extends DefaultActionToken {
     this.state = state;
     this.rememberMe = rememberMe;
     this.actionTokenPersistent = isActionTokenPersistent;
+    this.isNewUser = isNewUser;
     this.nonce = nonce;
   }
 
   private MagicLinkActionToken() {
-    // Note that the class must have a private constructor without any arguments. This is necessary
+    // Note that the class must have a private constructor without any arguments.
+    // This is necessary
     // to deserialize the token class from JWT.
   }
 
@@ -135,5 +141,13 @@ public class MagicLinkActionToken extends DefaultActionToken {
 
   public void setNonce(String value) {
     this.nonce = value;
+  }
+
+  public Boolean getIsNewUser() {
+    return this.isNewUser;
+  }
+
+  public void setIsNewUser(Boolean value) {
+    this.isNewUser = value;
   }
 }

@@ -47,18 +47,20 @@ import org.keycloak.services.resources.LoginActionsService;
 import org.keycloak.services.resources.RealmsResource;
 import org.keycloak.sessions.AuthenticationSessionModel;
 
-/** common utilities for Magic Link authentication, used by the authenticator and resource */
+/**
+ * common utilities for Magic Link authentication, used by the authenticator and
+ * resource
+ */
 @JBossLog
 public class MagicLink {
 
   public static String MAGIC_LINK = "magic";
   public static String EMAIL_OTP = "email-otp";
 
-  public static final String CREATE_NONEXISTENT_USER_CONFIG_PROPERTY =
-      "ext-magic-create-nonexistent-user";
+  public static final String CREATE_NONEXISTENT_USER_CONFIG_PROPERTY = "ext-magic-create-nonexistent-user";
 
   public static Consumer<UserModel> registerEvent(final EventBuilder event,
-                                                  String authenticatorName) {
+      String authenticatorName) {
     return new Consumer<UserModel>() {
       @Override
       public void accept(UserModel user) {
@@ -115,8 +117,9 @@ public class MagicLink {
       String clientId,
       OptionalInt validity,
       Boolean rememberMe,
-      AuthenticationSessionModel authSession) {
-    return createActionToken(user, clientId, validity, rememberMe, authSession, true);
+      AuthenticationSessionModel authSession,
+      Boolean isNewUser) {
+    return createActionToken(user, clientId, validity, rememberMe, authSession, true, isNewUser);
   }
 
   public static MagicLinkContinuationActionToken createExpandedActionToken(
@@ -127,15 +130,14 @@ public class MagicLink {
 
     String nonce = authSession.getClientNote(OIDCLoginProtocol.NONCE_PARAM);
     int absoluteExpirationInSecs = Time.currentTime() + validityInSecs;
-    MagicLinkContinuationActionToken token =
-        new MagicLinkContinuationActionToken(
-            user.getId(),
-            absoluteExpirationInSecs,
-            clientId,
-            nonce,
-            authSession.getParentSession().getId(),
-            authSession.getTabId(),
-            authSession.getRedirectUri());
+    MagicLinkContinuationActionToken token = new MagicLinkContinuationActionToken(
+        user.getId(),
+        absoluteExpirationInSecs,
+        clientId,
+        nonce,
+        authSession.getParentSession().getId(),
+        authSession.getTabId(),
+        authSession.getRedirectUri());
     return token;
   }
 
@@ -145,7 +147,8 @@ public class MagicLink {
       OptionalInt validity,
       Boolean rememberMe,
       AuthenticationSessionModel authSession,
-      Boolean isActionTokenPersistent) {
+      Boolean isActionTokenPersistent,
+      Boolean isNewUser) {
     String redirectUri = authSession.getRedirectUri();
     String scope = authSession.getClientNote(OIDCLoginProtocol.SCOPE_PARAM);
     String state = authSession.getClientNote(OIDCLoginProtocol.STATE_PARAM);
@@ -162,20 +165,8 @@ public class MagicLink {
         nonce,
         state,
         rememberMe,
-        isActionTokenPersistent);
-  }
-
-  public static MagicLinkActionToken createActionToken(
-      UserModel user,
-      String clientId,
-      String redirectUri,
-      OptionalInt validity,
-      String scope,
-      String nonce,
-      String state,
-      Boolean rememberMe) {
-    return createActionToken(
-        user, clientId, redirectUri, validity, scope, nonce, state, rememberMe, true);
+        isActionTokenPersistent,
+        isNewUser);
   }
 
   public static MagicLinkActionToken createActionToken(
@@ -187,37 +178,55 @@ public class MagicLink {
       String nonce,
       String state,
       Boolean rememberMe,
-      Boolean isActionTokenPersistent) {
+      Boolean isNewUser) {
+    return createActionToken(
+        user, clientId, redirectUri, validity, scope, nonce, state, rememberMe, true, isNewUser);
+  }
+
+  public static MagicLinkActionToken createActionToken(
+      UserModel user,
+      String clientId,
+      String redirectUri,
+      OptionalInt validity,
+      String scope,
+      String nonce,
+      String state,
+      Boolean rememberMe,
+      Boolean isActionTokenPersistent,
+      Boolean isNewUser) {
     // build the action token
     int validityInSecs = validity.orElse(60 * 60 * 24); // 1 day
     int absoluteExpirationInSecs = Time.currentTime() + validityInSecs;
-    MagicLinkActionToken token =
-        new MagicLinkActionToken(
-            user.getId(),
-            absoluteExpirationInSecs,
-            clientId,
-            redirectUri,
-            scope,
-            nonce,
-            state,
-            rememberMe,
-            isActionTokenPersistent);
+    MagicLinkActionToken token = new MagicLinkActionToken(
+        user.getId(),
+        absoluteExpirationInSecs,
+        clientId,
+        redirectUri,
+        scope,
+        nonce,
+        state,
+        rememberMe,
+        isActionTokenPersistent,
+        isNewUser);
     return token;
   }
 
   public static MagicLinkActionToken createActionToken(
       UserModel user, String clientId, String redirectUri, OptionalInt validity) {
-    return createActionToken(user, clientId, redirectUri, validity, null, null, null, false, true);
+    return createActionToken(user, clientId, redirectUri, validity, null, null, null, false, true, false);
   }
 
   public static String linkFromActionToken(
       KeycloakSession session, RealmModel realm, DefaultActionToken token) {
     UriInfo uriInfo = session.getContext().getUri();
 
-    // This is a workaround for situations where the realm you are using to call this (e.g. master)
-    // is different than the one you are generating the action token for. Because the
+    // This is a workaround for situations where the realm you are using to call
+    // this (e.g. master)
+    // is different than the one you are generating the action token for. Because
+    // the
     // SignatureProvider
-    // assumes the value that is set in session.getContext().getRealm() has the keys it should use,
+    // assumes the value that is set in session.getContext().getRealm() has the keys
+    // it should use,
     // we
     // need to temporarily reset it
     RealmModel r = session.getContext().getRealm();
@@ -229,9 +238,8 @@ public class MagicLink {
     }
     session.getContext().setRealm(realm);
 
-    UriBuilder builder =
-        actionTokenBuilder(
-            uriInfo.getBaseUri(), token.serialize(session, realm, uriInfo), token.getIssuedFor());
+    UriBuilder builder = actionTokenBuilder(
+        uriInfo.getBaseUri(), token.serialize(session, realm, uriInfo), token.getIssuedFor());
 
     // and then set it back
     session.getContext().setRealm(r);
@@ -257,13 +265,18 @@ public class MagicLink {
   public static boolean sendMagicLinkEmail(KeycloakSession session, UserModel user, String link) {
     RealmModel realm = session.getContext().getRealm();
     try {
-      EmailTemplateProvider emailTemplateProvider =
-          session.getProvider(EmailTemplateProvider.class);
+      EmailTemplateProvider emailTemplateProvider = session.getProvider(EmailTemplateProvider.class);
       String realmName = getRealmName(realm);
       List<Object> subjAttr = ImmutableList.of(realmName);
       Map<String, Object> bodyAttr = Maps.newHashMap();
       bodyAttr.put("realmName", realmName);
       bodyAttr.put("magicLink", link);
+
+      String tokenString = link.substring(link.indexOf("key=") + 4);
+      tokenString = tokenString.substring(0, tokenString.indexOf("&"));
+      MagicLinkActionToken token = session.tokens().decode(tokenString, MagicLinkActionToken.class);
+      bodyAttr.put("is_new_user", token.getIsNewUser().toString());
+
       emailTemplateProvider
           .setRealm(realm)
           .setUser(user)
@@ -280,8 +293,7 @@ public class MagicLink {
       KeycloakSession session, UserModel user, String link) {
     RealmModel realm = session.getContext().getRealm();
     try {
-      EmailTemplateProvider emailTemplateProvider =
-          session.getProvider(EmailTemplateProvider.class);
+      EmailTemplateProvider emailTemplateProvider = session.getProvider(EmailTemplateProvider.class);
       String realmName = getRealmName(realm);
       List<Object> subjAttr = ImmutableList.of(realmName);
       Map<String, Object> bodyAttr = Maps.newHashMap();
@@ -306,8 +318,7 @@ public class MagicLink {
   public static boolean sendOtpEmail(KeycloakSession session, UserModel user, String code) {
     RealmModel realm = session.getContext().getRealm();
     try {
-      EmailTemplateProvider emailTemplateProvider =
-          session.getProvider(EmailTemplateProvider.class);
+      EmailTemplateProvider emailTemplateProvider = session.getProvider(EmailTemplateProvider.class);
       String realmName = getRealmName(realm);
       List<Object> subjAttr = ImmutableList.of(realmName);
       Map<String, Object> bodyAttr = Maps.newHashMap();
@@ -329,11 +340,8 @@ public class MagicLink {
   }
 
   public static final String MAGIC_LINK_AUTH_FLOW_ALIAS = "magic link";
-  public static final String COOKIE_PROVIDER_ID =
-      org.keycloak.authentication.authenticators.browser.CookieAuthenticatorFactory.PROVIDER_ID;
-  public static final String IDP_REDIRECTOR_PROVIDER_ID =
-      org.keycloak.authentication.authenticators.browser.IdentityProviderAuthenticatorFactory
-          .PROVIDER_ID;
+  public static final String COOKIE_PROVIDER_ID = org.keycloak.authentication.authenticators.browser.CookieAuthenticatorFactory.PROVIDER_ID;
+  public static final String IDP_REDIRECTOR_PROVIDER_ID = org.keycloak.authentication.authenticators.browser.IdentityProviderAuthenticatorFactory.PROVIDER_ID;
   public static final String MAGIC_LINK_PROVIDER_ID = MagicLinkAuthenticatorFactory.PROVIDER_ID;
 
   public static void realmPostCreate(
@@ -415,8 +423,8 @@ public class MagicLink {
   }
 
   private static int getNextPriority(RealmModel realm, AuthenticationFlowModel parentFlow) {
-    List<AuthenticationExecutionModel> executions =
-        realm.getAuthenticationExecutionsStream(parentFlow.getId()).collect(Collectors.toList());
+    List<AuthenticationExecutionModel> executions = realm.getAuthenticationExecutionsStream(parentFlow.getId())
+        .collect(Collectors.toList());
     return executions.isEmpty() ? 0 : executions.get(executions.size() - 1).getPriority() + 1;
   }
 
@@ -426,17 +434,14 @@ public class MagicLink {
       AuthenticationFlowModel flow,
       String providerId,
       AuthenticationExecutionModel.Requirement requirement) {
-    boolean hasExecution =
-        realm
-                .getAuthenticationExecutionsStream(flow.getId())
-                .filter(e -> providerId.equals(e.getAuthenticator()))
-                .count()
-            > 0;
+    boolean hasExecution = realm
+        .getAuthenticationExecutionsStream(flow.getId())
+        .filter(e -> providerId.equals(e.getAuthenticator()))
+        .count() > 0;
 
     if (!hasExecution) {
       log.infof("adding execution %s for auth flow for %s", providerId, flow.getAlias());
-      ProviderFactory f =
-          session.getKeycloakSessionFactory().getProviderFactory(Authenticator.class, providerId);
+      ProviderFactory f = session.getKeycloakSessionFactory().getProviderFactory(Authenticator.class, providerId);
       AuthenticationExecutionModel execution = new AuthenticationExecutionModel();
       execution.setParentFlow(flow.getId());
       execution.setRequirement(requirement);
@@ -460,8 +465,7 @@ public class MagicLink {
     if (context.getUser() != null && context.getUser().getEmail() != null) {
       return context.getUser().getEmail();
     }
-    String username =
-        trimToNull(context.getAuthenticationSession().getAuthNote(ATTEMPTED_USERNAME));
+    String username = trimToNull(context.getAuthenticationSession().getAuthNote(ATTEMPTED_USERNAME));
     if (username != null) {
       if (MagicLink.isValidEmail(username)) {
         return username;
@@ -479,7 +483,8 @@ public class MagicLink {
       return null;
     }
     String trimmed = s.trim();
-    if ("".equalsIgnoreCase(trimmed)) trimmed = null;
+    if ("".equalsIgnoreCase(trimmed))
+      trimmed = null;
     return trimmed;
   }
 }

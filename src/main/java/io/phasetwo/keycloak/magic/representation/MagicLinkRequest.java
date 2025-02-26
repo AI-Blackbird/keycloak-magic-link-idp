@@ -46,4 +46,7 @@ public class MagicLinkRequest {
 
   @JsonProperty("reusable")
   private Boolean actionTokenPersistent = true;
+
+  @JsonProperty("is_new_user")
+  private Boolean isNewUser = false;
 }
